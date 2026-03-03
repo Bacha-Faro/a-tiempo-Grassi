@@ -389,7 +389,6 @@
       const [adminAuth, setAdminAuth] = useState(false);
       const [adminPass, setAdminPass] = useState("");
       const att = useAttendance();
-      if (screen === "qr") return <QRPrintPage onBack={() => setScreen("home")} />;
       if (screen === "admin") {
         if (!adminAuth) return (
           <div style={{ ...S.app, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
@@ -420,7 +419,6 @@
           {att.error && <div style={{ background:"#450a0a", color:"#fca5a5", padding:"12px 20px", borderRadius:"8px", fontSize:"14px", maxWidth:"340px", textAlign:"center" }}>⚠️ {att.error}</div>}
           <div style={{ display:"flex", flexDirection:"column", gap:"10px", width:"100%", maxWidth:"280px" }}>
             <button style={{ ...btn("blue"),  padding:"15px", fontSize:"15px" }} onClick={() => setScreen("admin")}>🔐 Administración</button>
-            <button style={{ ...btn("gray"),  padding:"15px", fontSize:"15px" }} onClick={() => setScreen("qr")}>🖨️ Imprimir cartel QR</button>
             <a href="?mode=kiosk" style={{ ...btn("green"), padding:"15px", fontSize:"15px", textDecoration:"none", textAlign:"center", display:"block" }}>🖥️ Modo Recepción (PC)</a>
           </div>
         </div>
@@ -472,6 +470,7 @@
         { id:"calendar",  label:"📅 Calendario"  },
         { id:"reports",   label:"📈 Reportes"    },
         { id:"history",   label:"🗂️ Historial"  },
+        { id:"qr",        label:"🖨️ Cartel QR"  },
       ];
 
       return (
@@ -501,6 +500,7 @@
             {!att.loading && !att.error && view==="calendar"  && <CalendarView  att={att} />}
             {!att.loading && !att.error && view==="reports"   && <ReportsView   att={att} />}
             {!att.loading && !att.error && view==="history"   && <HistoryView   att={att} />}
+            {view==="qr" && <QRPrintPage onBack={() => setView("dashboard")} />}
           </div>
         </div>
       );
