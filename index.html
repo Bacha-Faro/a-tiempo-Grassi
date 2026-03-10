@@ -168,28 +168,20 @@
 
       function getStats(empId) {
         const empRecs = records.filter(r => r.emp_id===empId && r.check_out);
-        const empEvts = events.filter(e => e.emp_id===empId);
-        let worked = 0, expected = 0, days = 0;
+        const emp = getEmp(empId);
+        let worked = 0, extra = 0, debt = 0;
         const daysWorked = [...new Set(empRecs.map(r => r.date))];
+        const days = daysWorked.length;
         daysWorked.forEach(dateStr => {
-          const emp = getEmp(empId);
           if (!emp) return;
-          const dayMin = empRecs.filter(r => r.date===dateStr).reduce((s,r) => s+diffMin(r.check_in,r.check_out), 0);
-          worked += dayMin;
-          days++;
-          const exempt = empEvts.some(e => EXEMPT_TYPES.includes(e.type) && e.date<=dateStr && (e.date_to||e.date)>=dateStr);
-          if (!exempt) expected += getExpectedMin(emp, dateStr);
+          const dayWorked = empRecs.filter(r => r.date===dateStr).reduce((s,r) => s+diffMin(r.check_in,r.check_out), 0);
+          worked += dayWorked;
+          const dayExpected = getExpectedMin(emp, dateStr);
+          const diff = dayWorked - dayExpected;
+          if (diff > 0) extra += diff;
+          else if (diff < 0) debt += Math.abs(diff);
         });
-        empEvts.filter(e => EXEMPT_TYPES.includes(e.type)).forEach(evt => {
-          const start = new Date(evt.date+"T12:00:00");
-          const end   = new Date((evt.date_to||evt.date)+"T12:00:00");
-          for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
-            const ds = isoDate(d);
-            if (d.getDay()===0) continue;
-            if (!daysWorked.includes(ds)) days++;
-          }
-        });
-        return { worked, expected, balance:worked-expected, days };
+        return { worked, days, extra, debt };
       }
 
       function getTodayRecord(empId) {
@@ -542,7 +534,8 @@
                     <div><div style={S.lbl}>Entrada</div><div style={{ fontFamily:"monospace" }}>{rec ? fmtTime(rec.check_in) : "--:--"}</div></div>
                     <div><div style={S.lbl}>Salida</div><div style={{ fontFamily:"monospace" }}>{rec?.check_out ? fmtTime(rec.check_out) : "--:--"}</div></div>
                     <div><div style={S.lbl}>Días trabajados</div><div>{stats.days}</div></div>
-                    <div><div style={S.lbl}>Balance total</div><div style={stats.balance>=0?S.pos:S.neg}>{toHHMM(stats.balance)}</div></div>
+                    <div><div style={S.lbl}>Hs. extras</div><div style={S.pos}>{stats.extra>0?toHHMM(stats.extra).replace("+",""):"-"}</div></div>
+                    <div><div style={S.lbl}>Debe hs.</div><div style={stats.debt>0?S.neg:{color:"#e2e8f0"}}>{stats.debt>0?toHHMM(-stats.debt).replace("-",""):"-"}</div></div>
                   </div>
                 </div>
               );
@@ -561,15 +554,15 @@
 
       function exportEmp() {
         const rows = [
-          ["Fecha","Entrada","Salida","Trabajado","Esperado","Balance"],
+          ["Fecha","Entrada","Salida","Trabajado","Esperado","Extras","Debe"],
           ...empRecs.map(r => {
             const worked   = diffMin(r.check_in, r.check_out);
             const expected = att.getExpectedMin(emp, r.date);
-            const exempt   = empEvts.some(e => EXEMPT_TYPES.includes(e.type) && e.date<=r.date && (e.date_to||e.date)>=r.date);
-            return [fmtDate(r.date+"T12:00:00"), fmtTime(r.check_in), fmtTime(r.check_out), toHHMM(worked), exempt?"EXENTO":toHHMM(expected), exempt?"--":toHHMM(worked-expected)];
+            const diff     = worked - expected;
+            return [fmtDate(r.date+"T12:00:00"), fmtTime(r.check_in), fmtTime(r.check_out), toHHMM(worked).replace("+",""), toHHMM(expected).replace("+",""), diff>0?toHHMM(diff).replace("+",""):"-", diff<0?toHHMM(-diff).replace("-",""):"-"];
           }),
           [],
-          ["TOTAL","","",toHHMM(stats.worked),toHHMM(stats.expected),toHHMM(stats.balance)],
+          ["TOTAL","","",toHHMM(stats.worked).replace("+",""),"",stats.extra>0?toHHMM(stats.extra).replace("+",""):"-",stats.debt>0?toHHMM(-stats.debt).replace("-",""):"-"],
         ];
         exportCSV(rows, `asistencia_${emp.id}.csv`);
       }
@@ -588,10 +581,10 @@
 
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:"12px", marginBottom:"20px" }}>
             {[
-              { label:"Días trabajados",  value:stats.days,              color:"#e2e8f0" },
-              { label:"Horas trabajadas", value:toHHMM(stats.worked),    color:"#e2e8f0" },
-              { label:"Horas esperadas",  value:toHHMM(stats.expected),  color:"#e2e8f0" },
-              { label:"Balance",          value:toHHMM(stats.balance),   color:stats.balance>=0?"#4ade80":"#f87171" },
+              { label:"Días trabajados",  value:stats.days,                                    color:"#e2e8f0" },
+              { label:"Horas trabajadas", value:toHHMM(stats.worked).replace("+",""),          color:"#e2e8f0" },
+              { label:"Horas extras",     value:stats.extra>0?toHHMM(stats.extra).replace("+",""):"-",  color:stats.extra>0?"#4ade80":"#64748b" },
+              { label:"Debe horas",       value:stats.debt>0?toHHMM(-stats.debt).replace("-",""):"-",   color:stats.debt>0?"#f87171":"#64748b" },
             ].map(s => (
               <div key={s.label} style={S.card}>
                 <div style={S.lbl}>{s.label}</div>
@@ -603,22 +596,22 @@
           <div style={{ ...S.card, overflowX:"auto" }}>
             <h3 style={{ margin:"0 0 12px", fontSize:"16px" }}>Historial de Asistencia</h3>
             <table style={{ width:"100%", borderCollapse:"collapse", minWidth:"500px" }}>
-              <thead><tr>{["Fecha","Entrada","Salida","Trabajado","Esperado","Balance"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <thead><tr>{["Fecha","Entrada","Salida","Trabajado","Esperado","Extras","Debe"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
               <tbody>
-                {empRecs.length===0 && <tr><td colSpan={6} style={{ ...S.td, textAlign:"center", color:"#475569", padding:"24px" }}>Sin registros</td></tr>}
+                {empRecs.length===0 && <tr><td colSpan={7} style={{ ...S.td, textAlign:"center", color:"#475569", padding:"24px" }}>Sin registros</td></tr>}
                 {empRecs.map(r => {
                   const worked   = diffMin(r.check_in, r.check_out);
                   const expected = att.getExpectedMin(emp, r.date);
-                  const exempt   = empEvts.some(e => EXEMPT_TYPES.includes(e.type) && e.date<=r.date && (e.date_to||e.date)>=r.date);
-                  const bal      = worked - expected;
+                  const diff     = worked - expected;
                   return (
                     <tr key={r.id}>
                       <td style={S.td}>{fmtDate(r.date+"T12:00:00")}</td>
                       <td style={{ ...S.td, fontFamily:"monospace" }}>{fmtTime(r.check_in)}</td>
                       <td style={{ ...S.td, fontFamily:"monospace" }}>{fmtTime(r.check_out)}</td>
-                      <td style={{ ...S.td, fontFamily:"monospace" }}>{toHHMM(worked)}</td>
-                      <td style={{ ...S.td, fontFamily:"monospace", color:"#64748b" }}>{exempt?"EXENTO":toHHMM(expected)}</td>
-                      <td style={{ ...S.td, fontFamily:"monospace", ...(exempt?{}:bal>=0?S.pos:S.neg) }}>{exempt?"--":toHHMM(bal)}</td>
+                      <td style={{ ...S.td, fontFamily:"monospace" }}>{toHHMM(worked).replace("+","")}</td>
+                      <td style={{ ...S.td, fontFamily:"monospace", color:"#64748b" }}>{toHHMM(expected).replace("+","")}</td>
+                      <td style={{ ...S.td, fontFamily:"monospace", color:diff>0?"#4ade80":"#64748b" }}>{diff>0?toHHMM(diff).replace("+",""):"-"}</td>
+                      <td style={{ ...S.td, fontFamily:"monospace", color:diff<0?"#f87171":"#64748b" }}>{diff<0?toHHMM(-diff).replace("-",""):"-"}</td>
                     </tr>
                   );
                 })}
@@ -769,25 +762,29 @@
           const d = new Date(e.date+"T12:00:00");
           return e.emp_id===emp.id && d.getMonth()+1===month && d.getFullYear()===year;
         });
-        const worked   = empRecs.reduce((s,r)=>s+diffMin(r.check_in,r.check_out), 0);
-        const days     = new Set(empRecs.map(r=>r.date)).size;
-        const expected = [...new Set(empRecs.map(r=>r.date))].reduce((s,ds) => {
-          const exempt = empEvts.some(e=>EXEMPT_TYPES.includes(e.type)&&e.date<=ds&&(e.date_to||e.date)>=ds);
-          return s + (exempt ? 0 : att.getExpectedMin(emp,ds));
-        }, 0);
+        const worked = empRecs.reduce((s,r)=>s+diffMin(r.check_in,r.check_out), 0);
+        const days   = new Set(empRecs.map(r=>r.date)).size;
+        let extra = 0, debt = 0;
+        [...new Set(empRecs.map(r=>r.date))].forEach(ds => {
+          const dayWorked   = empRecs.filter(r=>r.date===ds).reduce((s,r)=>s+diffMin(r.check_in,r.check_out),0);
+          const dayExpected = att.getExpectedMin(emp, ds);
+          const diff = dayWorked - dayExpected;
+          if (diff > 0) extra += diff;
+          else if (diff < 0) debt += Math.abs(diff);
+        });
         const francos   = empEvts.filter(e=>e.type==="franco").length;
         const vacations = empEvts.filter(e=>e.type==="vacation").reduce((s,e)=>{
           const d1=new Date(e.date+"T12:00:00"), d2=new Date((e.date_to||e.date)+"T12:00:00");
           return s+Math.round((d2-d1)/86400000)+1;
         }, 0);
         const permits = empEvts.filter(e=>e.type==="tramite").reduce((s,e)=>s+(e.hours?parseFloat(e.hours):0), 0);
-        return { emp, days, worked, expected, balance:worked-expected, francos, vacations, permits };
+        return { emp, days, worked, extra, debt, francos, vacations, permits };
       });
 
       function exportMonth() {
         exportCSV(
-          [["Empleado","ID","Días","Trabajado","Esperado","Balance","Francos","Vacaciones","Permisos (h)"],
-           ...rows.map(r=>[r.emp.name,r.emp.id,r.days,toHHMM(r.worked),toHHMM(r.expected),toHHMM(r.balance),r.francos,r.vacations,r.permits.toFixed(1)])],
+          [["Empleado","ID","Días","Trabajado","Hs. Extras","Debe Horas","Francos","Vacaciones","Permisos (h)"],
+           ...rows.map(r=>[r.emp.name,r.emp.id,r.days,toHHMM(r.worked).replace("+",""),r.extra>0?toHHMM(r.extra).replace("+",""):"-",r.debt>0?toHHMM(-r.debt).replace("-",""):"-",r.francos,r.vacations,r.permits.toFixed(1)])],
           `reporte_${year}_${String(month).padStart(2,"0")}.csv`
         );
       }
@@ -808,15 +805,15 @@
           </div>
           <div style={{ ...S.card, overflowX:"auto" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", minWidth:"600px" }}>
-              <thead><tr>{["Empleado","Días","Trabajado","Esperado","Balance","Francos","Vacac.","Permisos"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <thead><tr>{["Empleado","Días","Trabajado","Hs. Extras","Debe Horas","Francos","Vacac.","Permisos"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {rows.map(r => (
                   <tr key={r.emp.id}>
                     <td style={S.td}><div style={{ fontWeight:600 }}>{r.emp.name}</div><div style={{ color:"#64748b", fontSize:"11px", fontFamily:"monospace" }}>{r.emp.id}</div></td>
                     <td style={S.td}>{r.days}</td>
-                    <td style={{ ...S.td, fontFamily:"monospace" }}>{toHHMM(r.worked)}</td>
-                    <td style={{ ...S.td, fontFamily:"monospace", color:"#64748b" }}>{toHHMM(r.expected)}</td>
-                    <td style={{ ...S.td, fontFamily:"monospace", ...(r.balance>=0?S.pos:S.neg) }}>{toHHMM(r.balance)}</td>
+                    <td style={{ ...S.td, fontFamily:"monospace" }}>{toHHMM(r.worked).replace("+","")}</td>
+                    <td style={{ ...S.td, fontFamily:"monospace", color:r.extra>0?"#4ade80":"#64748b" }}>{r.extra>0?toHHMM(r.extra).replace("+",""):"-"}</td>
+                    <td style={{ ...S.td, fontFamily:"monospace", color:r.debt>0?"#f87171":"#64748b" }}>{r.debt>0?toHHMM(-r.debt).replace("-",""):"-"}</td>
                     <td style={S.td}>{r.francos||"-"}</td>
                     <td style={S.td}>{r.vacations||"-"}</td>
                     <td style={S.td}>{r.permits>0?`${r.permits.toFixed(1)}h`:"-"}</td>
@@ -840,16 +837,14 @@
           <h2 style={{ margin:"0 0 20px", fontSize:"20px" }}>Historial Completo</h2>
           <div style={{ ...S.card, overflowX:"auto" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", minWidth:"580px" }}>
-              <thead><tr>{["Fecha","Empleado","ID","Entrada","Salida","Trabajado","Balance"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <thead><tr>{["Fecha","Empleado","ID","Entrada","Salida","Trabajado","Esperado","Extras","Debe"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
               <tbody>
-                {allRecs.length===0 && <tr><td colSpan={7} style={{ ...S.td, textAlign:"center", color:"#475569", padding:"24px" }}>Sin registros</td></tr>}
+                {allRecs.length===0 && <tr><td colSpan={9} style={{ ...S.td, textAlign:"center", color:"#475569", padding:"24px" }}>Sin registros</td></tr>}
                 {allRecs.map(r => {
-                  const emp     = att.getEmp(r.emp_id);
-                  const worked  = diffMin(r.check_in, r.check_out);
-                  const expected= emp ? att.getExpectedMin(emp, r.date) : 480;
-                  const empEvts = att.events.filter(e=>e.emp_id===r.emp_id);
-                  const exempt  = empEvts.some(e=>EXEMPT_TYPES.includes(e.type)&&e.date<=r.date&&(e.date_to||e.date)>=r.date);
-                  const bal     = worked - expected;
+                  const emp      = att.getEmp(r.emp_id);
+                  const worked   = diffMin(r.check_in, r.check_out);
+                  const expected = emp ? att.getExpectedMin(emp, r.date) : 480;
+                  const diff     = worked - expected;
                   return (
                     <tr key={r.id}>
                       <td style={S.td}>{fmtDate(r.date+"T12:00:00")}</td>
@@ -857,8 +852,10 @@
                       <td style={{ ...S.td, fontFamily:"monospace", color:"#64748b", fontSize:"12px" }}>{r.emp_id}</td>
                       <td style={{ ...S.td, fontFamily:"monospace" }}>{fmtTime(r.check_in)}</td>
                       <td style={{ ...S.td, fontFamily:"monospace" }}>{fmtTime(r.check_out)}</td>
-                      <td style={{ ...S.td, fontFamily:"monospace" }}>{toHHMM(worked)}</td>
-                      <td style={{ ...S.td, fontFamily:"monospace", ...(exempt?{}:bal>=0?S.pos:S.neg) }}>{exempt?"EXENTO":toHHMM(bal)}</td>
+                      <td style={{ ...S.td, fontFamily:"monospace" }}>{toHHMM(worked).replace("+","")}</td>
+                      <td style={{ ...S.td, fontFamily:"monospace", color:"#64748b" }}>{toHHMM(expected).replace("+","")}</td>
+                      <td style={{ ...S.td, fontFamily:"monospace", color:diff>0?"#4ade80":"#64748b" }}>{diff>0?toHHMM(diff).replace("+",""):"-"}</td>
+                      <td style={{ ...S.td, fontFamily:"monospace", color:diff<0?"#f87171":"#64748b" }}>{diff<0?toHHMM(-diff).replace("-",""):"-"}</td>
                     </tr>
                   );
                 })}
